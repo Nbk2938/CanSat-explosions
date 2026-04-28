@@ -173,11 +173,66 @@ def _fmt_mmss(seconds: float) -> str:
 # Verified label parsing + ground truth plot
 # ---------------------------------------------------------------------------
 
-SITE_NAMES = {
-    "20260205_140018000_iOS.MOV":      "Site 1 (.MOV)",
-    "20260205_150632000_iOS.MP4":      "Site 2 (_iOS.MP4)",
-    "TimeVideo_20260205_150217~3.mp4": "Site 3 (TimeVideo)",
+SITE_NAMES = {                       # MIX OF SITES NUMBERS --- CHECK!!
+    "20260205_140018000_iOS.MOV":      "S3 — 18000_iOS",
+    "20260205_150632000_iOS.MP4":      "S1 — 32000_iOS  (reference)",
+    "TimeVideo_20260205_150217~3.mp4": "S2 — TimeVideo",
 }
+
+# Video filename → user-convention site number (S1/S2/S3)
+FILE_TO_SITE = {
+    "20260205_140018000_iOS.MOV":      3,
+    "20260205_150632000_iOS.MP4":      1,
+    "TimeVideo_20260205_150217~3.mp4": 2,
+}
+
+MANUAL_LABEL_FILE = os.path.join(OUTPUT_DIR, "site_event_labels_verified.txt")
+
+
+def load_manual_labels(path: str) -> dict:
+    """
+    Parse the manually verified combined label file.
+    Returns {site_int: [(t_label_s, arrival_type), ...]}
+    Only certain events (no '?') are included.
+    """
+    cross_re = re.compile(r"S([123])([123])_+(\d+)")
+    local_re  = re.compile(r"\bS([123])_(\d+)\b")
+    by_site: dict = {1: [], 2: [], 3: []}
+    if not os.path.exists(path):
+        return by_site
+    with open(path) as f:
+        for line in f:
+            parts = line.strip().split("\t", 2)
+            if len(parts) < 3:
+                continue
+            t, label = float(parts[0]), parts[2]
+            if "?" in label:
+                continue
+            arr = "LAUNCH" if "LAUNCH" in label else "DET"
+            if cross_re.search(label):
+                continue  # cross-site arrivals handled by load_intersite_labels
+            m = local_re.search(label)
+            if m:
+                by_site[int(m.group(1))].append((t, arr))
+    return by_site
+
+def load_intersite_labels(path: str) -> dict:
+    """Returns {site_int: [t_label_s, ...]} for certain cross-site arrivals only."""
+    cross_re = re.compile(r"S([123])([123])_+(\d+)")
+    by_site: dict = {1: [], 2: [], 3: []}
+    if not os.path.exists(path):
+        return by_site
+    with open(path) as f:
+        for line in f:
+            parts = line.strip().split("\t", 2)
+            if len(parts) < 3:
+                continue
+            t, label = float(parts[0]), parts[2]
+            m = cross_re.search(label)
+            if m and int(m.group(1)) != int(m.group(2)):
+                by_site[int(m.group(1))].append(t)
+    return by_site
+
 
 CATEGORY_STYLE = {
     "S2":        dict(color="#2ca02c", marker="D", label="S2 – local detonation"),
@@ -385,15 +440,17 @@ def main():
         axes = [axes]
 
     colors = plt.cm.tab10.colors
-    marker_styles = {"RMS": ("v", "red"), f"Band {BAND_HZ[0]}-{BAND_HZ[1]} Hz": ("^", "orange")}
+    marker_styles = {"RMS": ("v", "red"), f"Band {BAND_HZ[0]}-{BAND_HZ[1]} Hz": ("^", "#00BCD4")}
 
-    for ax, r, color in zip(axes, records, colors):
+    for idx, (ax, r, color) in enumerate(zip(axes, records, colors)):
         t_local = np.arange(len(r["samples"])) / r["sr"]
         t_datetime = [t0 + timedelta(seconds=r["offset_s"] + float(t)) for t in t_local]
 
         ax.plot(t_datetime, r["samples"], lw=0.4, color=color, alpha=0.8)
         ax.set_ylabel("Amplitude", fontsize=9)
         ax.set_title(r["label"], fontsize=9, loc="left")
+        ax.text(0.5, 1.0, f"Site {idx + 1}", transform=ax.transAxes,
+                fontsize=12, fontweight="bold", ha="center", va="bottom")
         ax.axvline(r["start"], color=color, lw=1, ls="--", alpha=0.5)
         ax.set_xlim(t_plot_start, t_end)
 
@@ -405,23 +462,52 @@ def main():
             ax.plot(wall, 0, marker=marker, color=mcol, ms=8, zorder=5,
                     label=ev["method"])
 
+        # ── overlay manually verified true events ──────────────────────────
+        manual_labels = load_manual_labels(MANUAL_LABEL_FILE)
+        site_num = FILE_TO_SITE.get(r["label"])
+        if site_num:
+            launch_added = det_added = False
+            for t_lbl, arr in manual_labels.get(site_num, []):
+                wall = t0 + timedelta(seconds=t_lbl)
+                if arr == "LAUNCH":
+                    col_m, lbl_m = "#8E44AD", "True LAUNCH"
+                    already = launch_added
+                    launch_added = True
+                else:
+                    col_m, lbl_m = "#C0392B", "True DET"
+                    already = det_added
+                    det_added = True
+                ax.axvline(wall, color=col_m, lw=2.0, ls="-", alpha=0.9,
+                           zorder=6, label=None if already else lbl_m)
+
+        # ── overlay inter-site arrivals (light, single legend entry) ──────
+        intersite_labels = load_intersite_labels(MANUAL_LABEL_FILE)
+        if site_num:
+            intersite_added = False
+            for t_lbl in intersite_labels.get(site_num, []):
+                wall = t0 + timedelta(seconds=t_lbl)
+                ax.axvline(wall, color="#555555", lw=1.0, ls="-", alpha=0.4,
+                           zorder=4,
+                           label=None if intersite_added else "Inter-site detonations")
+                intersite_added = True
+
         # Deduplicate legend entries
         handles, labels_leg = ax.get_legend_handles_labels()
         seen = {}
         for h, lbl in zip(handles, labels_leg):
             seen.setdefault(lbl, h)
         if seen:
-            ax.legend(seen.values(), seen.keys(), fontsize=7, loc="upper right")
+            ax.legend(seen.values(), seen.keys(), fontsize=7, loc="upper left")
 
         ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=tick_minutes))
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
         ax.tick_params(axis="x", labelrotation=30, labelsize=8)
 
     axes[-1].set_xlabel(t0.strftime("%Y-%m-%d"), fontsize=10)
-    fig.suptitle("Explosion Videos — Aligned Audio + Detected Events", fontsize=12, y=1.01)
+    fig.suptitle("Ground Truth Extraction and Verified Detonation Events", fontsize=12, y=1.01)
     plt.tight_layout()
 
-    out_path = os.path.join(OUTPUT_DIR, "aligned_audio_waveforms.png")
+    out_path = os.path.join(OUTPUT_DIR, "ground_truth_extraction.png")
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"\nPlot saved to {out_path}")
     plt.show()

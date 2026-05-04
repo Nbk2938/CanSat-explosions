@@ -133,6 +133,48 @@ pip install numpy scipy matplotlib moviepy openpyxl
 
 ## 4. How to run
 
+### Get the repository
+
+**From GitHub (clone):**
+```bash
+git clone https://github.com/Nbk2938/CanSat-explosions.git
+cd CanSat-explosions
+```
+
+**From a zip file** (e.g. downloaded from the submission or from GitHub → Code → Download ZIP):
+
+Extract the archive, then open a terminal / PowerShell in the extracted folder.
+All commands below must be run from that folder.
+
+---
+
+### Get the video files
+
+The raw video recordings are too large to include in the repository or zip.
+They are hosted as assets on the GitHub release and must be downloaded separately.
+
+**macOS / Linux:**
+```bash
+bash download_videos.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy Bypass -File download_videos.ps1
+```
+
+Both scripts create `Data/Explosion Videos/` and download the three files into it.
+`curl` must be available on macOS/Linux (it is by default). On Windows, PowerShell
+5.1 or later is required (included in all Windows 10/11 installations).
+
+> **Skip this step** if you only want to reproduce Steps 2 and 3
+> (CanSat extraction and alignment — no video needed):
+> ```bash
+> python3 run_pipeline.py --skip 1
+> ```
+
+### Run the pipeline
+
 All scripts must be run from the **repository root** (the folder containing
 `run_pipeline.py`).
 

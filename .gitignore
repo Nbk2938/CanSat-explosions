@@ -3,3 +3,26 @@ __pycache__/
 *.pyc
 Data/Explosion Videos/
 Data/BarbieDROPGoPro.mp4
+check_output/
+
+
+# ── auto-generated pipeline outputs ──────────────────────────
+# Plots (all .png in outputs/)
+outputs/*.png
+
+# Per-video detected-event label files (step 1)
+outputs/*_iOS_labels.txt
+outputs/TimeVideo_*_labels.txt
+
+# CanSat event labels (step 2)
+outputs/OBAMA_events_labels_OOSync.txt
+outputs/ScamSat_events_labels_OOSync.txt
+
+# Alignment metrics (step 3)
+outputs/cansat_metrics.txt
+
+# ── manual inputs — DO NOT gitignore ─────────────────────────
+# outputs/site_event_labels_verified.txt   ← Audacity combined timeline
+# outputs/Site 1 - 32000_iOS.txt           ← per-site Audacity labels
+# outputs/Site 2 - TimeVideo.txt
+# outputs/Site 3 - 18000_iOS.txt

@@ -5,7 +5,7 @@ OBAMA (Probe 5): events from Excel telemetry (SNR-based detection).
 ScamSat (Probe 6): events from binary FFT amplitude file (gain-based detection).
 """
 
-import csv
+#import csv
 import numpy as np
 import openpyxl
 import matplotlib
@@ -20,7 +20,7 @@ OUTPUT_DIR = "outputs"
 
 def extract_obama():
     excel_file = "Data/Probe_5_OBAMA/OBAMA_data_decoded.xlsx"
-    csv_out    = f"{OUTPUT_DIR}/OBAMA_data.csv"
+    #csv_out    = f"{OUTPUT_DIR}/OBAMA_data.csv"
     plot_out   = f"{OUTPUT_DIR}/OBAMA_events.png"
     label_out  = f"{OUTPUT_DIR}/OBAMA_events_labels_OOSync.txt"
 
@@ -33,11 +33,11 @@ def extract_obama():
     def col(name):
         return hdrs.index(name)
 
-    with open(csv_out, "w", newline="") as f:
+    """with open(csv_out, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(hdrs)
         w.writerows(data)
-    print(f"CSV → {csv_out}  ({len(data)} rows)")
+    print(f"CSV → {csv_out}  ({len(data)} rows)")"""
 
     # Collect all valid packet times in order so we can bracket each detection
     packet_times = sorted({
@@ -200,6 +200,10 @@ def extract_scamsat():
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main():
     extract_obama()
     extract_scamsat()
+
+
+if __name__ == "__main__":
+    main()

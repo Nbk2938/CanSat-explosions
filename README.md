@@ -1,78 +1,336 @@
 # CanSat-explosions
 
-Analysis of acoustic recordings from a CanSat detonation experiment.
-Three microphone sites recorded the same series of pyrotechnic events.
-The goal is to reconstruct event timing, source localisation, and
-inter-site propagation delays from the raw audio.
+Acoustic analysis of a CanSat pyrotechnic detonation experiment.
+Three ground microphone sites and two onboard probes (OBAMA and ScamSat) recorded
+the same series of detonation events. The analysis reconstructs event timing,
+inter-site acoustic propagation delays, and compares ground-based detection with
+onboard probe detections.
 
 ---
 
-## Experiment setup
+## Table of contents
 
-| Site | Recording | GPS coordinates |
-|------|-----------|-----------------|
-| S1 (reference) | 32000_iOS | 47.40601 N, 8.63522 E |
-| S2 | TimeVideo | 47.40453 N, 8.64424 E |
-| S3 | 18000_iOS | 47.39651 N, 8.64827 E |
+1. [Experiment setup](#1-experiment-setup)
+2. [Repository structure](#2-repository-structure)
+3. [Dependencies](#3-dependencies)
+4. [How to run](#4-how-to-run)
+5. [Pipeline steps](#5-pipeline-steps)
+6. [Manual step — Audacity labelling](#6-manual-step--audacity-labelling)
+7. [Key results](#7-key-results)
+8. [Open questions](#8-open-questions)
+
+---
+
+## 1. Experiment setup
+
+### Ground microphone sites
+
+Three smartphones recorded audio while CanSat pyrotechnic payloads were launched
+and detonated. Each device was placed at a fixed GPS location.
+
+| Site | Recording file | GPS coordinates |
+|------|---------------|-----------------|
+| S1 (reference) | `32000_iOS.MP4` | 47.40601 N, 8.63522 E |
+| S2 | `TimeVideo.mp4` | 47.40453 N, 8.64424 E |
+| S3 | `18000_iOS.MOV` | 47.39651 N, 8.64827 E |
 
 Inter-site distances (Haversine):
 
 | Pair | Distance |
 |------|----------|
 | S1 – S2 | ≈ 698 m |
-| S1 – S3 | ≈ 1443 m |
+| S1 – S3 | ≈ 1 443 m |
 | S2 – S3 | ≈ 943 m |
 
-Each CanSat event produces **two acoustic spikes** at the local microphone:
-1. **LAUNCH** – low-energy propulsion spike at ground level
-2. **DET** – high-energy detonation spike from altitude
+Two types of pyrotechnic payload were used:
+
+- **Single-spike** — a single loud explosion, producing one acoustic spike at
+  the local microphone.
+- **Double-spike (LAUNCH + DET)** — a two-stage event: a low-energy propulsion
+  spike at ground level (**LAUNCH**, first spike) followed by a high-energy
+  detonation spike from altitude (**DET**, second spike, louder).
+
+At the far microphones, single-spike events and the DET of double-spike events
+are reliably detected; the LAUNCH of a double-spike event is often below the
+noise floor at range.
+
+### Onboard probes
+
+Two probes flew on the CanSat and recorded independent sensor data:
+
+| Probe | Data file | Detection method |
+|-------|-----------|-----------------|
+| OBAMA (Probe 5) | `OBAMA_data_decoded.xlsx` | SNR threshold on transmitted acoustic events; timing known only to the telemetry interval |
+| ScamSat (Probe 6) | `fft.txt` (binary float32) | Consecutive-sample gain threshold (> 1.5) on 5–10 kHz FFT amplitude |
+
+The probes use a **mission clock** (seconds since boot / logging start), which is
+not synchronised to the ground microphone wall-clock. A post-hoc alignment step
+recovers the offset between the two time bases.
 
 ---
 
-## What was done
-
-### 1. Ground truth extraction (`ground_truth_extraction.py`)
-Raw audio was processed to detect energy spikes using two detectors run in
-parallel: an RMS detector and a bandpass (20–2000 Hz) detector. Frame
-references were used to synchronise audio to video timestamps.
-
-### 2. Manual event labelling
-All detected events were manually labelled in Audacity across all three sites
-on a shared timeline. Label format:
+## 2. Repository structure
 
 ```
-<method> <micSite><sourceSite>_<eventNum> [LAUNCH]
+CanSat-explosions/
+│
+├── Data/
+│   ├── Explosion Videos/          # raw video files — gitignored (large)
+│   ├── Probe_5_OBAMA/
+│   │   └── OBAMA_data_decoded.xlsx
+│   └── Probe_6_ScamSat/
+│       ├── fft.txt                # binary float32 FFT amplitudes
+│       ├── accel.txt              # binary int16 accelerometer data
+│       ├── alt.txt                # binary uint16 altitude data
+│       └── SignalProcessing_final.ipynb  # reference notebook for data format
+│
+├── outputs/                       # mix of manual inputs and generated outputs
+│   ├── site_event_labels_verified.txt   ← MANUAL INPUT (Audacity labels)
+│   ├── Site 1 - 32000_iOS.txt           ← MANUAL INPUT (per-site labels)
+│   ├── Site 2 - TimeVideo.txt           ← MANUAL INPUT
+│   ├── Site 3 - 18000_iOS.txt           ← MANUAL INPUT
+│   └── *.png / *_labels.txt             ← auto-generated (gitignored)
+│
+├── ground_truth_extraction.py     # Step 1 — audio extraction + event detection
+├── cansat_event_extraction.py     # Step 2 — OBAMA + ScamSat event extraction
+├── cansat_alignment.py            # Step 3 — timeline alignment + metrics
+├── run_pipeline.py                # orchestrates all three steps
+│
+└── README.md
 ```
 
-Unknown/inter-site events were tagged `S{mic}_FAR?`.  
-Labels are in `outputs/site_event_labels_moast_probable.txt`.
+**`outputs/` contains both manual and auto-generated files.**
+The four files marked `MANUAL INPUT` above are committed to the repository and
+are required inputs to Steps 1 and 3. All other files in `outputs/` are
+regenerated by the pipeline and are gitignored.
 
-### 3. Audio timeline alignment
+---
 
-The three recordings started at different wall-clock times and were placed on
-the shared Audacity timeline manually. Two reference events (S3_4 and S3_9)
-were identified with high certainty at all three sites and used to compute
-GPS-based timing offsets:
+## 3. Dependencies
 
-| Site | Offset applied |
-|------|---------------|
-| S1 (32000_iOS) | 0.000 s (reference) |
-| S2 (TimeVideo) | +0.803 s |
-| S3 (18000_iOS) | +2.428 s |
+Python 3.10 or later. Install all dependencies with:
 
-Residual after correction: ±0.075 s (≈ ±26 m), within GPS accuracy.
-GPS-calibrated label file: `outputs/site_event_labels_gps_calibrated.txt`
-(also exported as per-site label files under `outputs/Site N - *.txt`).
+```bash
+pip install numpy scipy matplotlib moviepy openpyxl
+```
 
-**Note on GPS vs acoustic distances:** raw measured delays before calibration
-were ~37 % longer than GPS distances imply. The distance *ratios* matched to
-within 1 %, confirming the GPS geometry is correct. The systematic offset
-was caused by the recordings not being synchronised to a common clock before
-the GPS correction was applied.
+| Package | Used for |
+|---------|----------|
+| `numpy` | Array operations, binary file reading |
+| `scipy` | Signal processing (spectrogram, `find_peaks`) |
+| `matplotlib` | All plots |
+| `moviepy` | Audio extraction from MP4 / MOV video files |
+| `openpyxl` | Reading the OBAMA Excel telemetry file |
 
-### 4. Calibrated acoustic delays
+**External tool (manual step only):**
 
-From the two reference events, after GPS alignment:
+- [Audacity](https://www.audacityteam.org/) — free, cross-platform audio editor.
+  Used to visually inspect the three aligned audio tracks and export label files.
+  Not required to reproduce the pipeline outputs; the label files it produced are
+  already committed in `outputs/`.
+
+---
+
+## 4. How to run
+
+All scripts must be run from the **repository root** (the folder containing
+`run_pipeline.py`).
+
+### Full pipeline
+
+```bash
+python3 run_pipeline.py
+```
+
+Step 1 loads and decodes the three video files, which takes around 1 minutes.
+If the video files are not available (they are gitignored), skip Step 1:
+
+```bash
+python3 run_pipeline.py --skip 1
+```
+
+### Individual steps
+
+```bash
+python3 ground_truth_extraction.py   # Step 1
+python3 cansat_event_extraction.py   # Step 2
+python3 cansat_alignment.py          # Step 3
+```
+
+### Skip multiple steps
+
+```bash
+python3 run_pipeline.py --skip 1 2   # run Step 3 only
+```
+
+### Outputs produced
+
+| File | Produced by |
+|------|------------|
+| `outputs/aligned_audio_waveforms.png` | Step 1 |
+| `outputs/ground_truth_extraction.png` | Step 1 |
+| `outputs/OBAMA_events_labels_OOSync.txt` | Step 2 |
+| `outputs/OBAMA_events.png` | Step 2 |
+| `outputs/ScamSat_events_labels_OOSync.txt` | Step 2 |
+| `outputs/ScamSat_events.png` | Step 2 |
+| `outputs/cansat_alignment.png` | Step 3 |
+| `outputs/cansat_alignment_events.png` | Step 3 |
+| `outputs/cansat_metrics.txt` | Step 3 |
+
+---
+
+## 5. Pipeline steps
+
+### Step 1 — Ground-truth extraction (`ground_truth_extraction.py`)
+
+**Inputs:** raw video files in `Data/Explosion Videos/`, manual label file
+`outputs/site_event_labels_verified.txt`.
+
+**What it does:**
+
+1. Extracts mono audio from each video using frame-reference timestamps to
+   anchor the clip to wall-clock time (required because two of the three files
+   had post-edited timestamps).
+2. Runs two independent energy detectors on each audio track:
+   - **RMS detector** — peak in the RMS amplitude envelope (50 ms window,
+     threshold = mean + 3 σ)
+   - **Band-energy detector** — spectral energy integrated over 20–2 000 Hz
+     (100 ms window, same threshold)
+3. Plots all three aligned waveforms on a shared wall-clock time axis, overlays
+   the automatically detected events and the manually verified ground-truth
+   events (from the label file).
+
+**Outputs:** `outputs/ground_truth_extraction.png`
+
+---
+
+### Step 2 — CanSat event extraction (`cansat_event_extraction.py`)
+
+#### OBAMA (Probe 5)
+
+**Input:** `Data/Probe_5_OBAMA/OBAMA_data_decoded.xlsx`
+
+OBAMA transmits detected acoustic events in telemetry packets. Each packet
+reports up to 5 events with SNR values. Because the exact event time within a
+packet is not known, each label spans the interval
+`[previous_packet_time, current_packet_time]` — the detonation occurred
+*somewhere* in that window.
+
+**Output:** `outputs/OBAMA_events_labels_OOSync.txt`, `outputs/OBAMA_events.png`
+
+#### ScamSat (Probe 6)
+
+**Input:** `Data/Probe_6_ScamSat/fft.txt` (binary `float32`, integrated
+5–10 kHz FFT amplitude sampled at ~1 Hz over a 3 650 s mission)
+
+Detection algorithm (from the reference notebook):
+
+1. Compute consecutive-sample gain: `gain[i] = audio[i+1] / audio[i]`
+2. A spike is flagged when `gain > 1.5` within the drop window (t = 829–995 s)
+3. Contiguous above-threshold samples count as a single event (rising edge only)
+
+The FFT data has a −36 s offset relative to the BMP/altitude data, corrected
+in the time-to-index conversion.
+
+**Output:** `outputs/ScamSat_events_labels_OOSync.txt`, `outputs/ScamSat_events.png`
+
+---
+
+### Step 3 — Timeline alignment and metrics (`cansat_alignment.py`)
+
+**Inputs:** `outputs/site_event_labels_verified.txt` (ground truth),
+`outputs/OBAMA_events_labels_OOSync.txt`, `outputs/ScamSat_events_labels_OOSync.txt`
+
+The two CanSat probes use a mission clock that is not synchronised with the
+ground microphone wall-clock. This step finds the offset δ between the two
+time bases using different strategies for each probe.
+
+#### ScamSat — spike-train cross-correlation
+
+ScamSat produces point events in time. For each candidate offset δ, the number
+of ground-truth events matched within ±2 s by a ScamSat detection is computed
+(weighted: DET = 2, LAUNCH = 1). The δ that maximises the weighted score is
+the best alignment. Inter-site arrivals are excluded from the ground truth
+because their source site is different from the recording site.
+
+#### OBAMA — interval count-matching
+
+OBAMA reports counts per telemetry interval, not individual event times.
+For each candidate δ, ground-truth events are bucketed into the OBAMA telemetry
+intervals and the dot product of (OBAMA count × GT weight sum) across all
+intervals is maximised. This is a rate-correlation approach, appropriate when
+exact timing is unavailable.
+
+#### Detection metrics
+
+After alignment, the following metrics are computed and written to
+`outputs/cansat_metrics.txt`:
+
+- **ScamSat**: precision, recall (overall, DET-only, LAUNCH-only), F1, false
+  positives, false negatives, sensitivity to matching tolerance (±0.5 to ±5 s)
+- **OBAMA**: interval-level TP/FP packet counts, GT event coverage, Pearson
+  correlation of counts vs GT weight
+- All proportions reported with **Wilson 95 % confidence intervals**
+
+Alignment uncertainty is estimated as the half-width of the δ range where the
+correlation score is ≥ 90 % of its peak.
+
+---
+
+## 6. Manual step — Audacity labelling
+
+This is the only step that cannot be reproduced automatically. Its outputs are
+committed to the repository so the rest of the pipeline can run without it.
+
+**What was done:**
+
+1. The three video files were imported into Audacity as separate tracks.
+2. The tracks were aligned on a shared timeline using the recording start times
+   derived from the video filenames and manual frame references.
+3. Every detected acoustic spike was inspected and labelled using the convention:
+
+   ```
+   [method] S<mic><source>_<N> [LAUNCH]
+   ```
+
+   - `S1_3` — event 3 detected at mic S1, originating at S1
+   - `S13_4` — event 4 detected at mic S1, originating at S3 (inter-site arrival)
+   - `S1_FAR?` — uncertain far-site arrival at S1
+   - `LAUNCH` suffix — the low-energy propulsion spike (first of two)
+
+4. The combined label file was exported as
+   `outputs/site_event_labels_verified.txt`.
+   Per-site files (`outputs/Site {1,2,3} - *.txt`) were also exported for
+   import back into Audacity.
+
+**GPS timing correction:**  
+Two reference events (identified at all three sites with high confidence) were
+used to compute GPS-based inter-site timing offsets:
+
+| Site | Offset |
+|------|--------|
+| S1 (reference) | 0.000 s |
+| S2 | +0.803 s |
+| S3 | +2.428 s |
+
+Residual after correction: ±0.075 s (≈ ±26 m, within GPS accuracy).
+
+**Inter-site Bayesian matching (`inter_site_labeling.py`):**  
+Uncertain `FAR?` events were matched to the most probable source site using
+calibrated acoustic travel-time delays and a Bayesian confidence model:
+
+```
+P(match | Δt) = N(Δt; μ, σ) / (N(Δt; μ, σ) + ρ_bg)
+```
+
+where ρ_bg is the local event density acting as the background hypothesis.
+Result: **14 / 41 FAR? events matched** at ≥ 75 % confidence.
+
+---
+
+## 7. Key results
+
+### Calibrated inter-site acoustic delays
 
 | Direction | LAUNCH delay | DET delay |
 |-----------|-------------|-----------|
@@ -82,80 +340,47 @@ From the two reference events, after GPS alignment:
 | S2 → S3 (reflected) | 3.552 ± 0.041 s | — |
 | S1 ↔ S2 | 2.035 ± 0.15 s (GPS-derived) | — |
 
-A reflected LAUNCH arrival from S2 to S3 was identified empirically:
-6 event pairs at S3 always had a second spike ~0.81 s after the direct arrival,
-consistent with a ~277 m longer reflected path.
+A reflected LAUNCH arrival from S2 → S3 was identified empirically: 6 event
+pairs always had a second spike ~0.81 s after the direct arrival, consistent
+with a ~277 m longer reflected path.
 
-### 5. Inter-site event matching (`inter_site_labeling.py`)
+### CanSat detection metrics (at best alignment offset)
 
-A Bayesian confidence model matched each `FAR?` event to its most probable
-source using the calibrated delays above:
+| Metric | ScamSat | OBAMA |
+|--------|---------|-------|
+| Alignment offset δ | −628.2 ± 0.8 s | +211.8 ± 67.5 s |
+| Precision | 0.750 [0.58–0.87] | — |
+| Recall — all GT events | 0.300 [0.21–0.41] | — |
+| Recall — DET only | 0.408 [0.28–0.55] | — |
+| Recall — LAUNCH only | 0.129 [0.05–0.29] | — |
+| F1 score | 0.429 | — |
+| GT event coverage | — | 0.613 [0.50–0.71] |
+| TP-packet rate | — | 0.769 [0.50–0.92] |
+| False positives | 8 events | 3 packets |
 
-```
-P(match | Δt) = N(Δt; μ, σ) / (N(Δt; μ, σ) + ρ_bg)
-```
+Confidence intervals are Wilson 95 % CI. OBAMA metrics are interval-level and
+not directly comparable to ScamSat event-level metrics.
 
-where `ρ_bg` is the local event density [events/s] acting as the background
-noise hypothesis. Threshold: 75 % confidence.
+**ScamSat** has a sharp alignment (±0.8 s uncertainty) and detects DET events
+reliably (41 % recall) but misses most LAUNCH events (13 % recall), consistent
+with the expectation that low-energy launch spikes are harder to detect at
+altitude.
 
-Key design choices:
-- All delay modes (LAUNCH, DET, REFL) are tried for every source event
-  regardless of how it was labelled at the source mic, because the source mic
-  sometimes misses the LAUNCH spike while the far mic still detects it.
-- Self-calibration for S1 ↔ S2 (no reference events) was attempted via a
-  sliding-window vote on pairwise Δt histograms but failed — too few data points.
-
-Result (GPS-calibrated labels): **14 / 41 FAR? events matched** at ≥ 75 %
-confidence. The remaining 27 are unresolved, mostly S3_FAR? events whose
-source could not be confirmed with the available calibration.
-
-### 6. Arrival-time consistency check (`arrival_time_comparison.py`)
-
-For each site pair, measured travel times in both directions were plotted
-against the calibrated reference lines. Key findings:
-
-- **S3 → S1** LAUNCH: mean 6.35 s (cal. 6.63 s), 4 events, consistent.
-- **S3 → S2** LAUNCH: mean 3.92 s, systematically ~0.45 s below calibrated —
-  suggests a residual ~0.3 s alignment offset between S2 and S3.
-- **S2 → S3** DET (matched as LAUNCH arrivals): mean 4.57 s, ~0.2 s above
-  calibrated — consistent with the same residual offset seen from the other
-  direction.
-- **S1 → S3**: only 3 uncertain events, one outlier at 4.2 s (likely
-  mis-labelled). Too few points to draw conclusions.
-- **S1 ↔ S2**: single event (S21_4?), inconclusive.
-
-### 7. Event timeline (`event_timeline.py`)
-
-Simple timeline plot of all *certain* events per site (uncertain FAR? events
-excluded). Output: `outputs/event_timeline.png`.
+**OBAMA** alignment uncertainty is large (±67.5 s) because the wide telemetry
+intervals make many offset values score similarly. The FP-packet rate of 23 %
+likely reflects vibration or wind noise detected before the drop phase.
 
 ---
 
-## Open questions / next steps
+## 8. Open questions
 
-- The S2–S3 residual offset (~0.3 s) was not fully resolved; the GPS
-  uncertainty for S2 (±50 m) can explain at most ±0.15 s per direction.
-- S1 ↔ S2 delays remain uncalibrated — no reference event was identified
-  with certainty at both S1 and S2.
-- Many S3_FAR? events could not be matched. They may be reflections within
-  S3's local environment or events not labelled in S1/S2.
-- Detonation height per event was not estimated; this would require
-  triangulation from at least two calibrated inter-site DET delays.
-
----
-
-## File overview
-
-```
-outputs/
-  site_event_labels_moast_probable.txt   — manually labelled combined timeline
-  site_event_labels_gps_calibrated.txt   — after GPS timing correction
-  site-event-labels-matched.txt          — after algorithmic FAR? matching
-  Site {1,2,3} - *.txt                   — per-site Audacity label files
-  event_timeline.png                     — timeline of certain events
-  arrival_time_comparison.png            — travel-time consistency plot
-  aligned_audio_waveforms.png            — waveform overview
-
-ground_truth_extraction.py   — audio processing pipeline
-event_timeline.py            — timeline visualisation
-```
+- The S2–S3 residual alignment offset (~0.3 s) was not fully resolved; GPS
+  uncertainty for S2 (±50 m) explains at most ±0.15 s per direction.
+- S1 ↔ S2 acoustic delays remain uncalibrated — no reference event was
+  identified with certainty at both sites.
+- 27 / 41 `FAR?` events at S3 could not be matched. They may be reflections
+  within S3's local environment or events not labelled at S1/S2.
+- Detonation height per event was not estimated. Triangulation would require at
+  least two calibrated inter-site DET delays for the same event.
+- The OBAMA alignment offset has large uncertainty. A shared GPS-disciplined
+  timestamp in future missions would eliminate this ambiguity entirely.
